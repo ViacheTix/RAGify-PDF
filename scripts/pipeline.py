@@ -124,6 +124,12 @@ def main() -> None:
     slice_parser.add_argument("-p", "--processing-dir", type=Path, default=Path("processing"))
     slice_parser.add_argument("-f", "--figures-dir", type=Path, default=Path("figures"))
     slice_parser.add_argument("-c", "--chunk-size", type=int, default=2)
+    slice_parser.add_argument(
+        "--extractor",
+        choices=["docling", "pymupdf", "auto"],
+        default="docling",
+        help="Figure extraction engine (default: docling)",
+    )
     slice_parser.add_argument("--no-images", action="store_true")
     slice_parser.add_argument("--force", action="store_true")
 
@@ -170,6 +176,7 @@ def main() -> None:
             figures_dir=args.figures_dir,
             chunk_size=args.chunk_size,
             extract_images=not args.no_images,
+            extractor=args.extractor,
             force=args.force,
         )
 
@@ -200,6 +207,7 @@ def main() -> None:
             figures_dir=args.figures_dir,
             chunk_size=2,
             extract_images=True,
+            extractor=getattr(args, "extractor", "docling"),
             force=False,
         )
         run_ai_processing(

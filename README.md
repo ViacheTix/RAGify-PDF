@@ -61,12 +61,12 @@
 flowchart LR
     A[source_pdfs/*.pdf] -->|slicer.py| B[processing/Article/X-Y.pdf]
     A -->|PyMuPDF| C[figures/Article/*.png]
-    B -->|HIL: Ручная очистка мусора| D{Оставшиеся чанки}
+    B -->|"HIL: Ручная очистка мусора"| D{Оставшиеся чанки}
     D -->|ai_processor.py| E[Gemini API / Docling]
     E -->|Key Rotation 15 RPM| F[processing/Article/X-Y.md]
-    F -->|HIL: Проверка качества| G{Есть ошибки?}
-    G -- Да -->|Переименование в X-Y!.pdf| D
-    G -- Нет -->|markfin.py| H[output/Article.md]
+    F -->|"HIL: Проверка качества"| G{Есть ошибки?}
+    G -->|"Да: Переименование в X-Y!.pdf"| D
+    G -->|"Нет: markfin.py"| H[output/Article.md]
 ```
 
 ### Этапы пайплайна
@@ -306,12 +306,12 @@ pdf-markdown-api/
 flowchart LR
     A[source_pdfs/*.pdf] -->|slicer.py| B[processing/Article/X-Y.pdf]
     A -->|PyMuPDF| C[figures/Article/*.png]
-    B -->|HIL: Manual Chunk Pruning| D{Queued Chunks}
+    B -->|"HIL: Ручная очистка мусора"| D{Оставшиеся чанки}
     D -->|ai_processor.py| E[Gemini API / Docling]
     E -->|Key Rotation 15 RPM| F[processing/Article/X-Y.md]
-    F -->|HIL: Quality Review| G{Errors Found?}
-    G -- Yes -->|Rename to X-Y!.pdf| D
-    G -- No -->|markfin.py| H[output/Article.md]
+    F -->|"HIL: Проверка качества"| G{Есть ошибки?}
+    G -->|"Да: Переименование в X-Y!.pdf"| D
+    G -->|"Нет: markfin.py"| H[output/Article.md]
 ```
 
 ### Pipeline Stages

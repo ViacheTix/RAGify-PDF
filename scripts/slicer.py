@@ -2,13 +2,15 @@
 """PDF Slicer and Image Extractor.
 
 Slices PDF documents into 2-page chunks for LLM processing and extracts
-embedded figures into the figures directory.
+embedded figures and vector charts into the figures directory using Docling
+(with PyMuPDF fallback).
 """
 
 from __future__ import annotations
 
 import argparse
 import io
+import shutil
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -17,7 +19,7 @@ import fitz  # PyMuPDF
 from PIL import Image
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
 
 console = Console()
@@ -28,15 +30,80 @@ def sanitize_folder_name(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_", " ", ".") else "_" for c in name).strip()
 
 
+def extract_figures_with_docling(
+    pdf_path: Path,
+    output_dir: Path,
+    force: bool = False,
+    min_width: int = 80,
+    min_height: int = 40,
+) -> int:
+    """Extract figures, charts, and diagrams using Docling's layout AI model.
+
+    This captures full multi-panel figures and vector charts that standard
+    raster extractors miss.
+    """
+    try:
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.datamodel.base_models import InputFormat
+        from docling_core.types.doc import PictureItem
+
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.generate_picture_images = True
+        pipeline_options.images_scale = 2.0
+
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+
+        conv_res = converter.convert(pdf_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        extracted_count = 0
+        for item, level in conv_res.document.iterate_items():
+            if isinstance(item, PictureItem):
+                try:
+                    img = item.get_image(conv_res.document)
+                    if not img:
+                        continue
+
+                    # Filter out tiny logos / header noise
+                    if img.width < min_width and img.height < min_height:
+                        continue
+
+                    extracted_count += 1
+                    target_path = output_dir / f"{extracted_count}.png"
+
+                    if target_path.exists() and not force:
+                        continue
+
+                    # Ensure standard RGB/RGBA PNG
+                    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                        img = img.convert("RGBA")
+                    elif img.mode != "RGB":
+                        img = img.convert("RGB")
+
+                    img.save(target_path, format="PNG")
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Could not save Docling picture: {e}[/yellow]")
+
+        return extracted_count
+
+    except Exception as e:
+        console.print(f"[yellow]Docling figure extraction failed ({e}), falling back to PyMuPDF...[/yellow]")
+        return 0
+
+
 def extract_images_from_doc(
     doc: fitz.Document,
     output_dir: Path,
     force: bool = False,
 ) -> int:
-    """Extract all embedded images from a PDF document into PNG files.
+    """Extract embedded raster images from a PDF document via PyMuPDF.
 
     Images are saved as figures/{article_name}/{index}.png.
-    Returns the count of extracted images.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     extracted_count = 0
@@ -58,16 +125,13 @@ def extract_images_from_doc(
                     continue
 
                 image_bytes = base_image["image"]
-                image_ext = base_image.get("ext", "").lower()
                 extracted_count += 1
                 target_path = output_dir / f"{extracted_count}.png"
 
                 if target_path.exists() and not force:
                     continue
 
-                # Convert to clean PNG via PIL
                 img = Image.open(io.BytesIO(image_bytes))
-                # Convert palette / CMYK / RGBA appropriately
                 if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                     img = img.convert("RGBA")
                 elif img.mode != "RGB":
@@ -89,6 +153,7 @@ def slice_pdf_file(
     figures_base_dir: Path,
     chunk_size: int = 2,
     extract_images: bool = True,
+    extractor: str = "docling",
     force: bool = False,
 ) -> Tuple[int, int]:
     """Slice a single PDF file into chunk_size page chunks and extract images.
@@ -108,7 +173,7 @@ def slice_pdf_file(
         return 0, 0
 
     if doc.is_encrypted:
-        console.print(f"[bold yellow]Warning: PDF is encrypted/password protected, skipping:[/bold yellow] {pdf_path.name}")
+        console.print(f"[bold yellow]Warning: PDF is encrypted, skipping:[/bold yellow] {pdf_path.name}")
         doc.close()
         return 0, 0
 
@@ -149,7 +214,24 @@ def slice_pdf_file(
     # 2. Extract Figures
     images_count = 0
     if extract_images:
-        images_count = extract_images_from_doc(doc, article_figures_dir, force=force)
+        if force and article_figures_dir.exists():
+            shutil.rmtree(article_figures_dir)
+            article_figures_dir.mkdir(parents=True, exist_ok=True)
+
+        if extractor in ("docling", "auto"):
+            images_count = extract_figures_with_docling(
+                pdf_path=pdf_path,
+                output_dir=article_figures_dir,
+                force=force,
+            )
+
+        # Fallback to PyMuPDF if docling returned 0 or wasn't used
+        if images_count == 0:
+            images_count = extract_images_from_doc(
+                doc=doc,
+                output_dir=article_figures_dir,
+                force=force,
+            )
 
     doc.close()
     return chunks_count, images_count
@@ -161,6 +243,7 @@ def process_slicing(
     figures_dir: Path = Path("figures"),
     chunk_size: int = 2,
     extract_images: bool = True,
+    extractor: str = "docling",
     force: bool = False,
 ) -> None:
     """Run slicing pipeline across all source PDFs or a single PDF file."""
@@ -191,6 +274,7 @@ def process_slicing(
             f"Source: [green]{source_path}[/green] ({len(pdf_files)} PDF file(s))\n"
             f"Processing Directory: [green]{processing_dir}[/green]\n"
             f"Figures Directory: [green]{figures_dir}[/green]\n"
+            f"Extractor Engine: [green]{extractor.upper()}[/green]\n"
             f"Chunk Size: [green]{chunk_size} pages[/green]",
             border_style="cyan",
         )
@@ -222,6 +306,7 @@ def process_slicing(
                 figures_base_dir=figures_dir,
                 chunk_size=chunk_size,
                 extract_images=extract_images,
+                extractor=extractor,
                 force=force,
             )
             total_chunks += chunks
@@ -272,6 +357,12 @@ def main() -> None:
         help="Number of pages per chunk (default: 2)",
     )
     parser.add_argument(
+        "--extractor",
+        choices=["docling", "pymupdf", "auto"],
+        default="docling",
+        help="Figure extraction engine (default: docling)",
+    )
+    parser.add_argument(
         "--no-images",
         action="store_true",
         help="Skip figure extraction",
@@ -289,6 +380,7 @@ def main() -> None:
         figures_dir=args.figures_dir,
         chunk_size=args.chunk_size,
         extract_images=not args.no_images,
+        extractor=args.extractor,
         force=args.force,
     )
 
