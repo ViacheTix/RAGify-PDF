@@ -84,8 +84,8 @@ flowchart LR
 ### 1. Клонирование репозитория
 
 ```bash
-git clone https://github.com/your-username/pdf-markdown-api.git
-cd pdf-markdown-api
+git clone https://github.com/ViacheTix/RAGify-PDF.git
+cd RAGify-PDF
 ```
 
 ### 2. Создание и активация виртуального окружения
@@ -329,8 +329,8 @@ flowchart LR
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/pdf-markdown-api.git
-cd pdf-markdown-api
+git clone https://github.com/ViacheTix/RAGify-PDF.git
+cd RAGify-PDF
 ```
 
 ### 2. Set up a virtual environment
